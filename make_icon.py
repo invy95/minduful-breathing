@@ -49,13 +49,14 @@ def hue_at(angle):
     c1, c2 = hues[idx], hues[min(idx + 1, len(hues) - 1)]
     return tuple(int(c1[j] + (c2[j] - c1[j]) * frac) for j in range(3))
 
+# 莲花花瓣放大至占满图标（原 105,70,130 → 0,160,250）
 for i in range(12):
     angle = i * 30
     color = hue_at(angle)
-    draw_ellipse_rotated(icon, SIZE, CX, CY, 105, 70, 130, angle, (*color, 140))
+    draw_ellipse_rotated(icon, SIZE, CX, CY, 0, 160, 250, angle, (*color, 140))
 
-# 中心光点
-radial_gradient(icon, CX, CY, 40, (255, 255, 250, 200), (200, 240, 235, 0))
+# 中心光点放大
+radial_gradient(icon, CX, CY, 100, (255, 255, 250, 200), (200, 240, 235, 0))
 
 # 保存多尺寸 ICO
 sizes = [16, 32, 48, 64, 128, 256]

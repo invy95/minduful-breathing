@@ -1,4 +1,4 @@
-# 觉察呼吸 - 后端配置
+# 呼吸泡泡 - 后端配置
 
 ## 1. 创建 Supabase 项目
 
@@ -75,7 +75,43 @@ else:
 logout()
 ```
 
-## 6. 后续收费扩展
+## 6. 激活码（本地版）
+
+本地免登录版使用激活码，一码一设备，激活后不可再次使用。
+
+### 6.1 执行迁移
+
+在 SQL Editor 中执行 `supabase/migrations/002_activation.sql`。
+
+### 6.2 生成激活码与续期
+
+需配置 `SUPABASE_SERVICE_ROLE_KEY`（Settings -> API -> service_role key）。
+
+```bash
+cd backend
+python admin_activation.py gen 5 30    # 生成 5 个码，每个 30 天
+python admin_activation.py extend XXXX-XXXX-XXXX 30   # 续期 30 天
+python admin_activation.py list       # 查看所有激活码
+```
+
+### 6.3 应用配置
+
+在 `backend/.env` 中配置：
+```
+SUPABASE_URL=...
+SUPABASE_ANON_KEY=...
+```
+
+## 7. 更新检查
+
+应用启动时会请求 `UPDATE_VERSION_URL` 对应的 JSON，格式：
+```json
+{"version": "1.0.1", "url": "https://下载地址/呼吸泡泡.zip"}
+```
+
+配置方式：在 `.env` 或环境变量中设置 `UPDATE_VERSION_URL`，例如 Supabase Storage 公开链接。
+
+## 8. 后续收费扩展
 
 - `user_subscription` 表已预留，可记录用户付费状态
 - 接入支付宝/微信支付后，支付成功时写入该表

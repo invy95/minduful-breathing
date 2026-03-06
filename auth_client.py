@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 """
-觉察呼吸 - 认证与功能开关客户端
+呼吸泡泡 - 认证与功能开关客户端
 使用 Supabase 实现：邮箱+密码登录、会话持久化、功能收费配置
 """
 import os
@@ -109,6 +110,28 @@ def login(email: str, password: str) -> tuple[bool, str]:
         return False, err
 
 
+def reset_password(email: str) -> tuple[bool, str]:
+    """
+    发送重置密码邮件
+    用户点击邮件中的链接后可设置新密码
+    返回 (成功与否, 消息)
+    """
+    client = _get_client()
+    if not client:
+        return False, '未配置 Supabase'
+    try:
+        client.auth.reset_password_for_email(
+            email.strip(),
+            {'redirect_to': os.environ.get('PASSWORD_RESET_REDIRECT', 'https://supabase.com')}
+        )
+        return True, '请查收重置密码邮件'
+    except Exception as e:
+        err = str(e)
+        if 'rate limit' in err.lower():
+            return False, '请稍后再试'
+        return False, err
+
+
 def logout() -> None:
     """登出，清除本地会话"""
     _clear_session()
@@ -145,6 +168,22 @@ def is_logged_in() -> bool:
     if data.get('access_token'):
         return True
     return refresh_session()
+
+
+def get_user_email():
+    """已登录用户的邮箱，未登录返回 None"""
+    if not is_logged_in():
+        return None
+    data = _load_session()
+    return data.get('email') if data else None
+
+
+def get_user_id():
+    """已登录用户的 ID（UUID 字符串），未登录返回 None"""
+    if not is_logged_in():
+        return None
+    data = _load_session()
+    return data.get('user_id') if data else None
 
 
 def get_feature_config() -> dict:
@@ -204,3 +243,44 @@ def can_use_feature(feature_key: str) -> bool:
     except Exception:
         pass
     return False
+
+
+# ── 版本检查 ──────────────────────────────────────────
+
+APP_VERSION = '1.0.0'  # 当前客户端版本，每次发版时更新
+
+
+def check_update() -> dict | None:
+    """
+    检查是否有强制更新
+    返回 None 表示无需更新，否则返回 {'version': ..., 'download_url': ..., 'message': ..., 'force': ...}
+    """
+    client = _get_client()
+    if not client:
+        return None
+    try:
+        r = client.table('app_config').select('value').eq('key', 'latest_version').execute()
+        if not r.data:
+            return None
+        info = json.loads(r.data[0]['value'])
+        latest = info.get('version', APP_VERSION)
+        if _version_gt(latest, APP_VERSION):
+            return {
+                'version': latest,
+                'download_url': info.get('download_url', ''),
+                'message': info.get('message', f'发现新版本 {latest}，请更新后使用'),
+                'force': info.get('force', True),
+            }
+    except Exception:
+        pass
+    return None
+
+
+def _version_gt(a: str, b: str) -> bool:
+    """比较版本号 a > b"""
+    try:
+        pa = [int(x) for x in a.split('.')]
+        pb = [int(x) for x in b.split('.')]
+        return pa > pb
+    except Exception:
+        return a != b
