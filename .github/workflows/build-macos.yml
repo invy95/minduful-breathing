@@ -3,13 +3,13 @@ name: Build macOS App
 on:
   push:
     branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build-macos:
     runs-on: macos-latest
+    permissions:
+      contents: write
     
     steps:
     - name: Checkout code
@@ -70,8 +70,13 @@ jobs:
         chmod +x "呼吸泡泡.app/Contents/MacOS/呼吸泡泡"
         zip -r "呼吸泡泡-macOS.zip" "呼吸泡泡.app"
         
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
+    - name: Upload to Release
+      uses: softprops/action-gh-release@v1
       with:
-        name: 呼吸泡泡-macOS
-        path: 呼吸泡泡-macOS.zip
+        tag_name: v1.0.0
+        name: "呼吸泡泡 macOS 版"
+        body: "自动打包的 macOS 版本"
+        files: 呼吸泡泡-macOS.zip
+        make_latest: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
