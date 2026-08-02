@@ -2,6 +2,8 @@
 """
 呼吸泡泡 - 激活码客户端
 首次启动需输入激活码，一码一设备，激活后不可再次使用。
+更新 2026-08-02：修复设备指纹不稳定、以及在线校验失败时忽略本地未过期缓存，
+导致激活码尚未到期却反复要求重新输入的问题。
 """
 from __future__ import annotations
 import os
@@ -9,12 +11,23 @@ import sys
 import json
 import hashlib
 import subprocess
+import re
+from datetime import datetime
+
+
+def _storage_dir():
+    folder = os.path.join(os.path.expanduser('~'), '.mindful_breathing')
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
 
 def _storage_path():
-    base = os.path.expanduser('~')
-    folder = os.path.join(base, '.mindful_breathing')
-    os.makedirs(folder, exist_ok=True)
-    return os.path.join(folder, 'activation.json')
+    return os.path.join(_storage_dir(), 'activation.json')
+
+
+def _fp_store_path():
+    return os.path.join(_storage_dir(), 'device_fp')
+
 
 def _load_activation():
     path = _storage_path()
@@ -26,63 +39,211 @@ def _load_activation():
             pass
     return None
 
+
 def _save_activation(data):
     path = _storage_path()
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False)
 
-def get_device_fingerprint() -> str:
-    """生成设备指纹（匿名，用于一码一机绑定）"""
+
+def _clear_activation():
+    path = _storage_path()
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
+def _parse_expires_ts(expires_at: str) -> float | None:
+    """解析 expires_at 为 epoch 秒，失败返回 None。"""
+    if not expires_at:
+        return None
+    try:
+        exp = str(expires_at).replace('Z', '+00:00')
+        if 'T' not in exp:
+            # 仅日期时按当天结束处理
+            exp = exp[:10] + 'T23:59:59+00:00'
+        return datetime.fromisoformat(exp).timestamp()
+    except Exception:
+        return None
+
+
+def _local_activation_valid() -> bool:
+    """本地激活缓存是否存在且未过期。"""
+    local = _load_activation()
+    if not local:
+        return False
+    exp_ts = _parse_expires_ts(local.get('expires_at') or '')
+    if exp_ts is None:
+        return False
+    return exp_ts > datetime.now().timestamp()
+
+
+def _create_no_window_flag() -> int:
+    return subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+
+
+def _normalize_id(value: str) -> str:
+    """提取硬件 ID 的有效内容，去掉表头与多余空白。"""
+    if not value:
+        return ''
+    lines = []
+    for line in value.replace('\r', '\n').split('\n'):
+        s = line.strip()
+        if not s:
+            continue
+        # 跳过 wmic / CIM 常见表头
+        if s.lower() in ('processorid', 'serialnumber', 'uuid', 'name'):
+            continue
+        lines.append(re.sub(r'\s+', '', s))
+    return '|'.join(lines)
+
+
+def _win_machine_guid() -> str:
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r'SOFTWARE\Microsoft\Cryptography',
+        )
+        try:
+            guid, _ = winreg.QueryValueEx(key, 'MachineGuid')
+        finally:
+            winreg.CloseKey(key)
+        guid = (guid or '').strip()
+        return guid
+    except Exception:
+        return ''
+
+
+def _win_product_uuid() -> str:
+    """通过 PowerShell CIM 读取主板 UUID（比已弃用的 wmic 更稳定）。"""
+    try:
+        cf = _create_no_window_flag()
+        r = subprocess.run(
+            [
+                'powershell', '-NoProfile', '-WindowStyle', 'Hidden', '-Command',
+                '(Get-CimInstance -ClassName Win32_ComputerSystemProduct).UUID',
+            ],
+            capture_output=True, text=True, timeout=8, creationflags=cf,
+        )
+        if r.returncode == 0:
+            return _normalize_id(r.stdout)
+    except Exception:
+        pass
+    return ''
+
+
+def _win_wmic_value(args: list[str]) -> str:
+    try:
+        cf = _create_no_window_flag()
+        r = subprocess.run(
+            args, capture_output=True, text=True, timeout=5, creationflags=cf,
+        )
+        if r.returncode == 0 and r.stdout:
+            return _normalize_id(r.stdout)
+    except Exception:
+        pass
+    return ''
+
+
+def _darwin_platform_uuid() -> str:
+    try:
+        r = subprocess.run(
+            ['ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0 and r.stdout:
+            for line in r.stdout.splitlines():
+                if 'IOPlatformUUID' in line:
+                    # "IOPlatformUUID" = "XXXX-...."
+                    m = re.search(r'"\s*=\s*"([^"]+)"', line)
+                    if m:
+                        return m.group(1).strip()
+                    return _normalize_id(line)
+    except Exception:
+        pass
+    return ''
+
+
+def _compute_device_fingerprint() -> str:
+    """基于稳定硬件标识计算设备指纹（不含易波动的原始命令输出）。"""
     parts = []
     if sys.platform == 'win32':
-        try:
-            cf = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-            r = subprocess.run(
-                ['wmic', 'cpu', 'get', 'processorid'],
-                capture_output=True, text=True, timeout=5, creationflags=cf
-            )
-            if r.returncode == 0 and r.stdout:
-                parts.append(r.stdout.strip())
-        except Exception:
-            pass
-        try:
-            cf = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-            r = subprocess.run(
-                ['wmic', 'diskdrive', 'get', 'serialnumber'],
-                capture_output=True, text=True, timeout=5, creationflags=cf
-            )
-            if r.returncode == 0 and r.stdout:
-                parts.append(r.stdout.strip())
-        except Exception:
-            pass
+        guid = _win_machine_guid()
+        if guid:
+            parts.append(f'MachineGuid:{guid}')
+        uuid = _win_product_uuid()
+        if uuid:
+            parts.append(f'ProductUUID:{uuid}')
+        # 仅在更稳定来源都失败时，才回退到规范化后的 wmic
+        if not parts:
+            cpu = _win_wmic_value(['wmic', 'cpu', 'get', 'processorid'])
+            if cpu:
+                parts.append(f'CPU:{cpu}')
+            disk = _win_wmic_value(['wmic', 'diskdrive', 'get', 'serialnumber'])
+            if disk:
+                parts.append(f'Disk:{disk}')
     elif sys.platform == 'darwin':
-        try:
-            r = subprocess.run(
-                ['ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'],
-                capture_output=True, text=True, timeout=5
-            )
-            if r.returncode == 0 and r.stdout and 'IOPlatformUUID' in r.stdout:
-                for line in r.stdout.splitlines():
-                    if 'IOPlatformUUID' in line:
-                        parts.append(line.strip())
-                        break
-        except Exception:
-            pass
-        try:
-            r = subprocess.run(
-                ['system_profiler', 'SPHardwareDataType'],
-                capture_output=True, text=True, timeout=5
-            )
-            if r.returncode == 0 and r.stdout and 'Serial Number' in r.stdout:
-                for line in r.stdout.splitlines():
-                    if 'Serial Number' in line:
-                        parts.append(line.strip())
-                        break
-        except Exception:
-            pass
-    parts.append(os.path.expanduser('~'))
+        uuid = _darwin_platform_uuid()
+        if uuid:
+            parts.append(f'IOPlatformUUID:{uuid}')
+        else:
+            try:
+                r = subprocess.run(
+                    ['system_profiler', 'SPHardwareDataType'],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if r.returncode == 0 and r.stdout:
+                    for line in r.stdout.splitlines():
+                        if 'Serial Number' in line:
+                            m = re.search(r':\s*(.+)$', line.strip())
+                            if m:
+                                parts.append(f'Serial:{m.group(1).strip()}')
+                            break
+            except Exception:
+                pass
+
+    # 区分同一台机器上的不同用户
+    parts.append(f'home:{os.path.expanduser("~")}')
     raw = '|'.join(parts) if parts else 'fallback'
     return hashlib.sha256(raw.encode('utf-8')).hexdigest()[:32]
+
+
+def get_device_fingerprint() -> str:
+    """
+    生成/读取设备指纹。
+    首次计算后持久化，避免同源硬件因 wmic 输出波动或偶发失败导致指纹变化。
+    """
+    path = _fp_store_path()
+    if os.path.exists(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                cached = f.read().strip()
+            if cached and len(cached) >= 16:
+                return cached
+        except Exception:
+            pass
+    fp = _compute_device_fingerprint()
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(fp)
+    except Exception:
+        pass
+    return fp
+
+
+def _device_fp_for_check() -> str:
+    """
+    校验时优先使用激活时绑定的指纹，确保与服务器记录一致；
+    避免算法升级或采集波动后查不到已有激活。
+    """
+    local = _load_activation()
+    if local and local.get('device_fp'):
+        return str(local['device_fp'])
+    return get_device_fingerprint()
+
 
 def _get_client():
     try:
@@ -94,6 +255,7 @@ def _get_client():
     if not url or not key:
         return None
     return create_client(url, key)
+
 
 def activate(code: str) -> tuple[bool, str]:
     """
@@ -127,6 +289,7 @@ def activate(code: str) -> tuple[bool, str]:
             return False, '激活码无效或已被使用'
         return False, err or '网络错误，请稍后重试'
 
+
 def _is_network_error(exc: Exception) -> bool:
     """判断是否为网络/连接类异常。已连上服务器但业务报错（证书、404等）不算离线。"""
     err = str(exc).lower()
@@ -148,6 +311,7 @@ def check_activation_with_retry(max_retries=3, delay_sec=4) -> tuple[str, bool]:
     """
     检查激活状态，网络失败时自动重试（应对开机自启动时网络未就绪）。
     """
+    status, activated = 'offline', False
     for attempt in range(max_retries):
         status, activated = check_activation_and_connectivity()
         if status == 'online' or activated:
@@ -164,32 +328,56 @@ def check_activation_and_connectivity() -> tuple[str, bool]:
     返回 (status, activated)
     - status='no_config': 未配置 Supabase（缺 .env）
     - status='offline': 网络异常
+    - status='error': 已触及服务但出现非网络异常（不应直接当成未激活）
     - status='online': 已联网，activated 表示是否已激活
     """
     client = _get_client()
     if not client:
         return 'no_config', False
-    fp = get_device_fingerprint()
+    fp = _device_fp_for_check()
     try:
         r = client.rpc('check_activation', {'p_device_fp': fp}).execute()
         data = r.data if hasattr(r, 'data') and r.data else None
         if isinstance(data, list) and data:
             data = data[0]
         if data and data.get('activated'):
-            if data.get('expires_at'):
-                _save_activation({'expires_at': data['expires_at'], 'device_fp': fp})
+            save = {
+                'expires_at': data.get('expires_at'),
+                'device_fp': fp,
+            }
+            # 保留已有绑定指纹，避免被异常空值覆盖
+            local = _load_activation() or {}
+            if not save.get('expires_at'):
+                save['expires_at'] = local.get('expires_at')
+            if local.get('device_fp') and not save.get('device_fp'):
+                save['device_fp'] = local.get('device_fp')
+            if save.get('expires_at'):
+                _save_activation(save)
             return 'online', True
+        # 服务端明确过期：清本地缓存，避免继续放行
+        if data and data.get('expired'):
+            _clear_activation()
+            return 'online', False
         return 'online', False
     except Exception as e:
         if _is_network_error(e):
             return 'offline', False
-        return 'online', False  # 其它服务端错误视为在线但未激活
+        # 其它服务端/解析错误：标记为 error，由上层结合本地缓存判断
+        return 'error', False
 
 
 def is_activated() -> bool:
-    """是否已激活且未过期。必须以服务器返回为准，不可仅凭本地缓存放行。"""
+    """
+    是否已激活且未过期。
+    优先以服务器返回为准；若服务端未确认（网络/服务异常、指纹漂移等），
+    则回退到本地未过期缓存，避免激活码尚未到期却反复要求重新输入。
+    服务端明确过期时会清除本地缓存，因此不会误放行。
+    """
     _, activated = check_activation_and_connectivity()
-    return activated
+    if activated:
+        return True
+    return _local_activation_valid()
+
 
 def activate_for_user(code: str, user_id: str) -> tuple[bool, str]:
     """
@@ -215,6 +403,7 @@ def activate_for_user(code: str, user_id: str) -> tuple[bool, str]:
             _save_activation({
                 'expires_at': data.get('expires_at'),
                 'user_id': user_id,
+                'device_fp': get_device_fingerprint(),
             })
             return True, '激活成功'
         return False, (data.get('msg') if isinstance(data, dict) else '') or '激活失败'
@@ -231,15 +420,9 @@ def is_user_activated(user_id: str) -> bool:
         return False
     local = _load_activation()
     if local and local.get('user_id') == user_id and local.get('expires_at'):
-        try:
-            from datetime import datetime
-            exp = local['expires_at'].replace('Z', '+00:00')
-            if 'T' in exp:
-                exp_ts = datetime.fromisoformat(exp).timestamp()
-                if exp_ts > datetime.now().timestamp():
-                    return True
-        except Exception:
-            pass
+        exp_ts = _parse_expires_ts(local['expires_at'])
+        if exp_ts is not None and exp_ts > datetime.now().timestamp():
+            return True
     client = _get_client()
     if not client:
         return bool(local and local.get('user_id') == user_id)
@@ -250,11 +433,19 @@ def is_user_activated(user_id: str) -> bool:
             data = data[0]
         if data and data.get('activated'):
             if data.get('expires_at'):
-                _save_activation({'expires_at': data['expires_at'], 'user_id': user_id})
+                _save_activation({
+                    'expires_at': data['expires_at'],
+                    'user_id': user_id,
+                    'device_fp': (local or {}).get('device_fp') or get_device_fingerprint(),
+                })
             return True
+        if data and data.get('expired'):
+            if local and local.get('user_id') == user_id:
+                _clear_activation()
+            return False
         return False
     except Exception:
-        return bool(local and local.get('user_id') == user_id)
+        return bool(local and local.get('user_id') == user_id and _local_activation_valid())
 
 
 def get_expiry_str() -> str:
