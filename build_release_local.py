@@ -20,6 +20,13 @@ def _zip_dir(src_dir: str, zip_path: str) -> None:
 
 
 def main():
+    # Windows CI 默认 cp1252，避免中文 print 导致打包中断
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
     base = os.path.dirname(os.path.abspath(__file__))
     os.chdir(base)
 
@@ -29,25 +36,36 @@ def main():
             try:
                 shutil.rmtree(p)
             except PermissionError:
-                print(f'跳过清理 {d}（可能有程序占用），继续打包...')
+                print(f'skip clean {d}')
 
+    # 仓库已有 app_icon.ico，图标更新失败不影响打包
     try:
-        subprocess.run([sys.executable, 'update_app_icon.py'], cwd=base, check=True)
-        print('已更新 app_icon')
+        env = os.environ.copy()
+        env['PYTHONIOENCODING'] = 'utf-8'
+        r_icon = subprocess.run(
+            [sys.executable, 'update_app_icon.py'],
+            cwd=base,
+            env=env,
+            check=False,
+        )
+        if r_icon.returncode == 0:
+            print('updated app_icon')
+        else:
+            print('skip update_app_icon (non-zero exit)')
     except Exception as e:
-        print(f'update_app_icon 跳过: {e}')
+        print(f'skip update_app_icon: {e}')
 
     r = subprocess.run(
         [sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', 'BreathingBallLocal.spec'],
         cwd=base,
     )
     if r.returncode != 0:
-        print('PyInstaller 打包失败')
+        print('PyInstaller failed')
         sys.exit(1)
 
     dist_dir = os.path.join(base, 'dist', '呼吸泡泡')
     if not os.path.isdir(dist_dir):
-        print(f'未找到打包输出目录: {dist_dir}')
+        print(f'missing dist dir: {dist_dir}')
         sys.exit(1)
 
     usage_content = (

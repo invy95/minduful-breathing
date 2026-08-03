@@ -26,6 +26,9 @@ jobs:
         pip install pyinstaller pillow pystray python-dotenv supabase httpx psutil
 
     - name: Build Windows app (local activation)
+      env:
+        PYTHONIOENCODING: utf-8
+        PYTHONUTF8: '1'
       run: python build_release_local.py
 
     - name: Upload to Release
