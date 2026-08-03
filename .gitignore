@@ -5,12 +5,16 @@ dist/
 *.zip
 
 # Python
+# 注意：不要用 *.py[cod]，会误忽略 PyInstaller 需要的 *.pyd
 __pycache__/
-*.py[cod]
+*.pyc
 *.pyo
 .Python
 *.egg-info/
 .eggs/
+
+# 仓库内旧的不完整 Windows 包请勿再当发布物使用；请下 Releases 里的完整 zip
+# BreathingBall_Local/ 仅作历史参考
 
 # 环境变量（含密钥，勿上传）
 .env

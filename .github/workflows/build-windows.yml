@@ -1,0 +1,47 @@
+name: Build Windows App
+
+on:
+  push:
+    branches: [ main, master, cursor/fix-windows-release-cac1 ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller pillow pystray python-dotenv supabase httpx psutil
+
+    - name: Build Windows app (local activation)
+      run: python build_release_local.py
+
+    - name: Upload to Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v1.0.1
+        name: "呼吸泡泡 Windows 版"
+        body: |
+          Windows 本地激活码版（完整包，含 `_internal`）。
+
+          使用方法：
+          1. 下载 `呼吸泡泡-Windows.zip` 并解压
+          2. 进入 `呼吸泡泡` 文件夹
+          3. 双击 `呼吸泡泡.exe`（勿单独移动 exe）
+          4. 首次启动输入激活码（需联网）
+        files: dist/呼吸泡泡-Windows.zip
+        make_latest: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
