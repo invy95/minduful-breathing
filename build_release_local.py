@@ -86,11 +86,11 @@ def main():
         shutil.copy(env_dist, os.path.join(dist_dir, '.env'))
         print('已复制 .env（来自 .env.dist）')
 
-    zip_path = os.path.join(base, 'dist', '呼吸泡泡-Windows.zip')
+    zip_path = os.path.join(base, 'dist', 'BreathingBall-Windows.zip')
     if os.path.exists(zip_path):
         os.remove(zip_path)
     _zip_dir(dist_dir, zip_path)
-    print(f'已生成 {zip_path}')
+    print(f'created {zip_path}')
 
     # 完整性检查：缺这些文件会导致 Failed to start embedded python interpreter
     internal = os.path.join(dist_dir, '_internal')

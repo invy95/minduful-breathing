@@ -40,11 +40,13 @@ jobs:
           Windows 本地激活码版（完整包，含 `_internal`）。
 
           使用方法：
-          1. 下载 `呼吸泡泡-Windows.zip` 并解压
+          1. 下载 `BreathingBall-Windows.zip` 并解压
           2. 进入 `呼吸泡泡` 文件夹
           3. 双击 `呼吸泡泡.exe`（勿单独移动 exe）
           4. 首次启动输入激活码（需联网）
-        files: dist/呼吸泡泡-Windows.zip
+
+          下载：https://github.com/invy95/minduful-breathing/releases/download/v1.0.1/BreathingBall-Windows.zip
+        files: dist/BreathingBall-Windows.zip
         make_latest: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
