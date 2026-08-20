@@ -2,7 +2,7 @@ name: Build Windows App
 
 on:
   push:
-    branches: [ main, master, cursor/fix-windows-release-cac1 ]
+    branches: [ main, master, cursor/fix-windows-release-cac1, cursor/portfolio-showcase-cac1 ]
   workflow_dispatch:
 
 jobs:

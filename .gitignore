@@ -13,8 +13,10 @@ __pycache__/
 *.egg-info/
 .eggs/
 
-# 仓库内旧的不完整 Windows 包请勿再当发布物使用；请下 Releases 里的完整 zip
-# BreathingBall_Local/ 仅作历史参考
+# 预编译包请从 Releases 下载，勿提交到仓库
+BreathingBall_Local/
+*.exe
+!shortcut_icon.ico
 
 # 环境变量（含密钥，勿上传）
 .env
