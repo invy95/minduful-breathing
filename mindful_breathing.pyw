@@ -1825,8 +1825,10 @@ def _ensure_single_instance():
 
 
 def _is_activated_local():
-    """离线时检查本地激活缓存，若未过期则视为已激活，避免每次开机都弹窗。"""
+    """检查本地激活缓存是否未过期。用于离线/服务异常/指纹漂移时避免未到期反复弹窗。"""
     try:
+        if hasattr(activation_client, '_local_activation_valid'):
+            return bool(activation_client._local_activation_valid())
         path = os.path.join(os.path.expanduser('~'), '.mindful_breathing', 'activation.json')
         if not os.path.exists(path):
             return False
@@ -1837,9 +1839,10 @@ def _is_activated_local():
             return False
         from datetime import datetime
         exp = exp.replace('Z', '+00:00')
-        if 'T' in exp:
-            exp_ts = datetime.fromisoformat(exp).timestamp()
-            return exp_ts > datetime.now().timestamp()
+        if 'T' not in exp:
+            exp = exp[:10] + 'T23:59:59+00:00'
+        exp_ts = datetime.fromisoformat(exp).timestamp()
+        return exp_ts > datetime.now().timestamp()
     except Exception:
         pass
     return False
@@ -1895,17 +1898,15 @@ if __name__ == '__main__':
             '可从项目 backend/.env 复制到 exe 所在文件夹。'
         )
         sys.exit(0)
-    network_failed = (status == 'offline')
+    network_failed = (status in ('offline', 'error'))
+    # 服务端未确认时，只要本地激活缓存未过期仍放行（应对指纹漂移、短暂服务异常）
+    if not activated and _is_activated_local():
+        activated = True
     if activated:
         app = BreathingBall()
         app.run()
         sys.exit(0)
-    # 离线时若本地有未过期激活缓存，视为已激活，避免每次开机都弹窗
-    if status == 'offline' and _is_activated_local():
-        app = BreathingBall()
-        app.run()
-        sys.exit(0)
-    # 未激活或网络检测失败：显示激活弹窗，用户可重试
+    # 未激活：显示激活弹窗，用户可重试
     result = [None]
     _run_activation_gate(result, show_network_hint=network_failed)
     if result[0] is not True:
